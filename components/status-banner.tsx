@@ -109,9 +109,6 @@ export function StatusBanner() {
           {openingHours && statusMode === 'automatic' && (
             <span className="opacity-80 font-normal">&nbsp;· {openingHours}</span>
           )}
-          {statusMode === 'force_open' && (
-            <span className="opacity-70 font-normal text-xs">&nbsp;(modo manual)</span>
-          )}
         </>
       ) : (
         <>
@@ -119,9 +116,6 @@ export function StatusBanner() {
           <span>Fechado no momento</span>
           {openingHours && statusMode === 'automatic' && (
             <span className="opacity-80 font-normal">&nbsp;· Abrimos {openingHours}</span>
-          )}
-          {statusMode === 'force_closed' && (
-            <span className="opacity-70 font-normal text-xs">&nbsp;(modo manual)</span>
           )}
         </>
       )}
