@@ -16,6 +16,7 @@ const nextConfig = {
   allowedDevOrigins: [
     '*.replit.dev',
     '*.kirk.replit.dev',
+    '*.picard.replit.dev',
     '*.replit.app',
     'localhost',
   ],
