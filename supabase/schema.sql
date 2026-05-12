@@ -46,11 +46,24 @@ create table if not exists pedidos (
   updated_at timestamptz default now()
 );
 
+-- Adicionais por categoria (shared across all products in that category)
+-- Note: 'bebidas' category does NOT support adicionais (enforced in application layer)
+create table if not exists adicionais_categoria (
+  id uuid primary key default gen_random_uuid(),
+  categoria_slug text references categorias(slug) on update cascade on delete cascade,
+  nome text not null,
+  preco numeric(10,2) not null default 0,
+  ativo boolean not null default true,
+  ordem int default 0,
+  created_at timestamptz default now()
+);
+
 -- Enable Row Level Security
 alter table categorias enable row level security;
 alter table produtos enable row level security;
 alter table clientes enable row level security;
 alter table pedidos enable row level security;
+alter table adicionais_categoria enable row level security;
 
 -- Public read access for menu data
 drop policy if exists "Public read categorias" on categorias;
@@ -58,6 +71,9 @@ create policy "Public read categorias" on categorias for select using (true);
 
 drop policy if exists "Public read produtos" on produtos;
 create policy "Public read produtos" on produtos for select using (true);
+
+drop policy if exists "Public read adicionais_categoria" on adicionais_categoria;
+create policy "Public read adicionais_categoria" on adicionais_categoria for select using (true);
 
 -- Anyone can create an order (the public website checkout)
 drop policy if exists "Public insert pedidos" on pedidos;
@@ -88,7 +104,6 @@ create policy "Public delete produtos bucket" on storage.objects
   for delete using (bucket_id = 'produtos');
 
 -- Settings / configuracoes (single-row table — enforced by singleton_key unique constraint)
--- Real column names verified against live DB:
 create table if not exists configuracoes (
   id                   uuid primary key default gen_random_uuid(),
   singleton_key        integer not null default 1,
@@ -104,12 +119,10 @@ create table if not exists configuracoes (
   updated_at           timestamptz default now()
 );
 
--- Enforce single-row invariant — prevents duplicate settings rows permanently
 alter table configuracoes add column if not exists singleton_key integer not null default 1;
 alter table configuracoes drop constraint if exists configuracoes_singleton;
 alter table configuracoes add constraint configuracoes_singleton unique (singleton_key);
 
--- Migration: add extended columns to existing tables that used old schema
 alter table configuracoes add column if not exists horario_funcionamento text default '';
 alter table configuracoes add column if not exists taxa_padrao numeric(10,2) default 5;
 alter table configuracoes add column if not exists dias_semana text default '["Segunda","Terça","Quarta","Quinta","Sexta","Sábado","Domingo"]';

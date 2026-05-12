@@ -4,7 +4,7 @@ export interface Product {
   description: string
   price: number
   image: string
-  category: 'hamburgueres' | 'combos' | 'acompanhamentos' | 'bebidas'
+  category: string
   active: boolean
 }
 
@@ -13,6 +13,16 @@ export interface Addon {
   name: string
   price: number
   maxQty?: number
+}
+
+export interface AddonDB {
+  id: string
+  categoriaSlug: string
+  nome: string
+  preco: number
+  ativo: boolean
+  ordem: number
+  createdAt?: string
 }
 
 export interface SelectedAddon {
