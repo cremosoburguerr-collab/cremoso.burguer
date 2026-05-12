@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import pool from '@/lib/pgDb'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -11,37 +11,66 @@ export async function PATCH(
   const { id } = await ctx.params
   const body = await req.json()
 
-  const updates: Record<string, unknown> = {}
-  if (body.nome !== undefined) updates.nome = String(body.nome).trim()
-  if (body.preco !== undefined) updates.preco = parseFloat(body.preco) || 0
-  if (body.ativo !== undefined) updates.ativo = !!body.ativo
-  if (body.ordem !== undefined) updates.ordem = parseInt(body.ordem) || 0
-  if (body.categoria_slug !== undefined) updates.categoria_slug = String(body.categoria_slug).trim()
+  const setClauses: string[] = []
+  const values: unknown[] = []
+  let idx = 1
 
-  if (Object.keys(updates).length === 0) {
+  if (body.nome !== undefined) {
+    setClauses.push(`nome = $${idx++}`)
+    values.push(String(body.nome).trim())
+  }
+  if (body.preco !== undefined) {
+    setClauses.push(`preco = $${idx++}`)
+    values.push(parseFloat(body.preco) || 0)
+  }
+  if (body.ativo !== undefined) {
+    setClauses.push(`ativo = $${idx++}`)
+    values.push(!!body.ativo)
+  }
+  if (body.ordem !== undefined) {
+    setClauses.push(`ordem = $${idx++}`)
+    values.push(parseInt(body.ordem) || 0)
+  }
+  if (body.categoria_slug !== undefined) {
+    setClauses.push(`categoria_slug = $${idx++}`)
+    values.push(String(body.categoria_slug).trim())
+  }
+
+  if (setClauses.length === 0) {
     return NextResponse.json({ error: 'Nenhum campo para atualizar' }, { status: 400 })
   }
 
-  const { data, error } = await supabaseAdmin
-    .from('adicionais_categoria')
-    .update(updates)
-    .eq('id', id)
-    .select()
-    .single()
+  values.push(id)
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  try {
+    const result = await pool.query(
+      `UPDATE adicionais_categoria
+       SET ${setClauses.join(', ')}
+       WHERE id = $${idx}
+       RETURNING id, categoria_slug, nome, preco, ativo, ordem, created_at`,
+      values
+    )
 
-  return NextResponse.json({
-    adicional: {
-      id: data.id,
-      categoriaSlug: data.categoria_slug,
-      nome: data.nome,
-      preco: Number(data.preco) || 0,
-      ativo: !!data.ativo,
-      ordem: data.ordem ?? 0,
-      createdAt: data.created_at,
-    },
-  })
+    if (result.rowCount === 0) {
+      return NextResponse.json({ error: 'Adicional não encontrado' }, { status: 404 })
+    }
+
+    const row = result.rows[0]
+    return NextResponse.json({
+      adicional: {
+        id: row.id,
+        categoriaSlug: row.categoria_slug,
+        nome: row.nome,
+        preco: Number(row.preco) || 0,
+        ativo: !!row.ativo,
+        ordem: row.ordem ?? 0,
+        createdAt: row.created_at,
+      },
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro interno'
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }
 
 export async function DELETE(
@@ -50,12 +79,19 @@ export async function DELETE(
 ) {
   const { id } = await ctx.params
 
-  const { error } = await supabaseAdmin
-    .from('adicionais_categoria')
-    .delete()
-    .eq('id', id)
+  try {
+    const result = await pool.query(
+      `DELETE FROM adicionais_categoria WHERE id = $1`,
+      [id]
+    )
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (result.rowCount === 0) {
+      return NextResponse.json({ error: 'Adicional não encontrado' }, { status: 404 })
+    }
 
-  return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Erro interno'
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }

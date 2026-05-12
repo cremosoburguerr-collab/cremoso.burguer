@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Plus, Pencil, Trash2, Check, X,
   ToggleLeft, ToggleRight, Loader2, AlertTriangle,
-  Copy, CheckCheck, ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,23 +17,6 @@ interface Category {
 }
 
 const BEBIDAS_SLUG = 'bebidas'
-
-const MIGRATION_SQL = `-- Execute no Supabase → SQL Editor → New Query
-create table if not exists adicionais_categoria (
-  id uuid primary key default gen_random_uuid(),
-  categoria_slug text references categorias(slug) on update cascade on delete cascade,
-  nome text not null,
-  preco numeric(10,2) not null default 0,
-  ativo boolean not null default true,
-  ordem int default 0,
-  created_at timestamptz default now()
-);
-
-alter table adicionais_categoria enable row level security;
-
-drop policy if exists "Public read adicionais_categoria" on adicionais_categoria;
-create policy "Public read adicionais_categoria"
-  on adicionais_categoria for select using (true);`
 
 interface FormState {
   nome: string
@@ -60,30 +42,12 @@ export function AddonsPanel() {
   const [loadingAddons, setLoadingAddons] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [tableReady, setTableReady] = useState<boolean | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [checkingMigration, setCheckingMigration] = useState(false)
 
   const [isAdding, setIsAdding] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm(''))
 
   const nonDrinksCategories = categories.filter((c) => c.slug !== BEBIDAS_SLUG)
-
-  const checkTableExists = useCallback(async (): Promise<boolean> => {
-    try {
-      const res = await fetch('/api/admin/adicionais?categoria_slug=__check__')
-      if (res.ok || res.status === 200) return true
-      const json = await res.json()
-      const msg: string = json?.error || ''
-      if (msg.includes('adicionais_categoria') && (msg.includes('schema cache') || msg.includes('does not exist'))) {
-        return false
-      }
-      return true
-    } catch {
-      return false
-    }
-  }, [])
 
   const fetchCategories = useCallback(async () => {
     setLoadingCats(true)
@@ -93,15 +57,15 @@ export function AddonsPanel() {
       const cats: Category[] = json.categories ?? []
       setCategories(cats)
       const nonDrinks = cats.filter((c) => c.slug !== BEBIDAS_SLUG)
-      if (nonDrinks.length > 0 && !selectedSlug) {
-        setSelectedSlug(nonDrinks[0].slug)
+      if (nonDrinks.length > 0) {
+        setSelectedSlug((prev) => prev || nonDrinks[0].slug)
       }
     } catch {
       setError('Erro ao carregar categorias.')
     } finally {
       setLoadingCats(false)
     }
-  }, [selectedSlug])
+  }, [])
 
   const fetchAddons = useCallback(async (slug: string) => {
     if (!slug || slug === BEBIDAS_SLUG) {
@@ -123,39 +87,12 @@ export function AddonsPanel() {
   }, [])
 
   useEffect(() => {
-    const init = async () => {
-      const exists = await checkTableExists()
-      setTableReady(exists)
-      if (exists) {
-        await fetchCategories()
-      }
-    }
-    init()
-  }, [])
+    fetchCategories()
+  }, [fetchCategories])
 
   useEffect(() => {
-    if (selectedSlug && tableReady) fetchAddons(selectedSlug)
-  }, [selectedSlug, tableReady, fetchAddons])
-
-  const handleCheckMigration = async () => {
-    setCheckingMigration(true)
-    const exists = await checkTableExists()
-    setTableReady(exists)
-    if (exists) {
-      await fetchCategories()
-    }
-    setCheckingMigration(false)
-  }
-
-  const handleCopySQL = async () => {
-    try {
-      await navigator.clipboard.writeText(MIGRATION_SQL)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2500)
-    } catch {
-      // fallback — select text manually
-    }
-  }
+    if (selectedSlug) fetchAddons(selectedSlug)
+  }, [selectedSlug, fetchAddons])
 
   const formatPrice = (price: number) =>
     price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -261,94 +198,8 @@ export function AddonsPanel() {
     }
   }
 
-  // ── Loading state ──
-  if (tableReady === null) {
-    return (
-      <div className="flex items-center justify-center gap-3 py-16 text-muted-foreground">
-        <Loader2 className="w-6 h-6 animate-spin" />
-        Verificando banco de dados...
-      </div>
-    )
-  }
-
-  // ── Migration needed ──
-  if (tableReady === false) {
-    return (
-      <div className="space-y-6 max-w-2xl">
-        <div>
-          <h2 className="text-lg font-bold text-foreground">Adicionais por Categoria</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Configuração inicial necessária antes de gerenciar adicionais.
-          </p>
-        </div>
-
-        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-5 space-y-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="font-bold text-foreground">Configuração única necessária</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Para usar adicionais, execute o SQL abaixo no painel do Supabase.
-                Isso só precisa ser feito uma vez.
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-foreground">SQL para executar:</p>
-              <div className="flex gap-2">
-                <a
-                  href="https://supabase.com/dashboard/project/zhzlctetqzfypztvpzfg/editor"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 text-sm text-foreground transition-colors"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  Abrir SQL Editor
-                </a>
-                <button
-                  onClick={handleCopySQL}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-sm transition-colors"
-                >
-                  {copied ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copied ? 'Copiado!' : 'Copiar SQL'}
-                </button>
-              </div>
-            </div>
-            <pre className="bg-card border border-border rounded-lg p-4 text-xs text-muted-foreground overflow-x-auto leading-relaxed whitespace-pre-wrap">
-              {MIGRATION_SQL}
-            </pre>
-          </div>
-
-          <div className="border-t border-yellow-500/20 pt-4">
-            <p className="text-sm text-muted-foreground mb-3">
-              <strong className="text-foreground">Passos:</strong>{' '}
-              1. Copie o SQL acima →{' '}
-              2. Abra o SQL Editor do Supabase →{' '}
-              3. Cole e execute →{' '}
-              4. Clique em "Verificar" abaixo
-            </p>
-            <Button
-              onClick={handleCheckMigration}
-              disabled={checkingMigration}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground"
-            >
-              {checkingMigration ? (
-                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Verificando...</>
-              ) : (
-                <><Check className="w-4 h-4 mr-2" /> Já executei, verificar</>
-              )}
-            </Button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   const isBebidas = selectedSlug === BEBIDAS_SLUG
 
-  // ── Normal addon management UI ──
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -356,7 +207,7 @@ export function AddonsPanel() {
         <div>
           <h2 className="text-lg font-bold text-foreground">Adicionais por Categoria</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Adicionais são compartilhados por todos os produtos da mesma categoria.
+            Adicionais são exibidos no modal do produto, agrupados por categoria.
           </p>
         </div>
         {!isBebidas && selectedSlug && (
