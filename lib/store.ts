@@ -13,6 +13,7 @@ import type {
   Settings,
   User,
   UserRole,
+  SelectedAddon,
 } from './types'
 
 /* ---------------- DEFAULT SETTINGS ---------------- */
@@ -24,6 +25,15 @@ const defaultSettings: Settings = {
   openingHours: '18:00 às 23:00',
   workingDays: ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'],
   statusMode: 'automatic',
+}
+
+/* helpers */
+function cartKey(i: CartItem): string {
+  return i.cartItemId || i.product.id
+}
+
+function genId(productId: string): string {
+  return `${productId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
 /* ---------------- STATE ---------------- */
@@ -47,8 +57,9 @@ interface AppState {
 
   cart: CartItem[]
   addToCart: (product: Product) => void
-  removeFromCart: (id: string) => void
-  updateQuantity: (id: string, qty: number) => void
+  addToCartWithOptions: (product: Product, addons: SelectedAddon[], observation: string) => void
+  removeFromCart: (cartItemId: string) => void
+  updateQuantity: (cartItemId: string, qty: number) => void
   clearCart: () => void
   getCartSubtotal: () => number
   getCartTotal: () => number
@@ -133,7 +144,18 @@ export const useStore = create<AppState>()(
         await api.updateCategory(id, { name })
         set((state) => ({
           categories: state.categories.map((c) =>
-            c.id === id ? { ...c, name, slug: name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') } : c
+            c.id === id
+              ? {
+                  ...c,
+                  name,
+                  slug: name
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/(^-|-$)/g, ''),
+                }
+              : c
           ),
         }))
       },
@@ -145,55 +167,82 @@ export const useStore = create<AppState>()(
       /* CART */
       cart: [],
 
+      /* Simple add — merges by product.id when no addons */
       addToCart: (product) =>
         set((state) => {
           const exists = state.cart.find(
-            (i) => i.product.id === product.id
+            (i) => i.product.id === product.id && (!i.addons || i.addons.length === 0)
           )
-
           if (exists) {
             return {
               cart: state.cart.map((i) =>
-                i.product.id === product.id
-                  ? { ...i, quantity: i.quantity + 1 }
-                  : i
+                cartKey(i) === cartKey(exists) ? { ...i, quantity: i.quantity + 1 } : i
               ),
             }
           }
-
           return {
-            cart: [...state.cart, { product, quantity: 1 }],
+            cart: [
+              ...state.cart,
+              {
+                cartItemId: genId(product.id),
+                product,
+                quantity: 1,
+                addons: [],
+                observation: '',
+              },
+            ],
           }
         }),
 
+      /* Add with addons/observation — always creates a new line */
+      addToCartWithOptions: (product, addons, observation) =>
+        set((state) => ({
+          cart: [
+            ...state.cart,
+            {
+              cartItemId: genId(product.id),
+              product,
+              quantity: 1,
+              addons,
+              observation,
+            },
+          ],
+        })),
+
       removeFromCart: (id) =>
         set((state) => ({
-          cart: state.cart.filter((i) => i.product.id !== id),
+          cart: state.cart.filter((i) => cartKey(i) !== id),
         })),
 
       updateQuantity: (id, qty) =>
         set((state) => ({
           cart:
             qty <= 0
-              ? state.cart.filter((i) => i.product.id !== id)
-              : state.cart.map((i) =>
-                  i.product.id === id ? { ...i, quantity: qty } : i
-                ),
+              ? state.cart.filter((i) => cartKey(i) !== id)
+              : state.cart.map((i) => (cartKey(i) === id ? { ...i, quantity: qty } : i)),
         })),
 
       clearCart: () => set({ cart: [] }),
 
       getCartSubtotal: () =>
-        get().cart.reduce(
-          (t, i) => t + i.product.price * i.quantity,
-          0
-        ),
+        get().cart.reduce((t, i) => {
+          const addonsPrice = (i.addons || []).reduce(
+            (s, sa) => s + sa.addon.price * sa.quantity,
+            0
+          )
+          return t + (i.product.price + addonsPrice) * i.quantity
+        }, 0),
 
-      getCartTotal: () =>
-        get().cart.reduce(
-          (t, i) => t + i.product.price * i.quantity,
-          0
-        ) + get().settings.deliveryFee,
+      getCartTotal: () => {
+        const subtotal = get().cart.reduce((t, i) => {
+          const addonsPrice = (i.addons || []).reduce(
+            (s, sa) => s + sa.addon.price * sa.quantity,
+            0
+          )
+          return t + (i.product.price + addonsPrice) * i.quantity
+        }, 0)
+        return subtotal + get().settings.deliveryFee
+      },
 
       /* ORDERS */
       orders: [],
@@ -234,9 +283,7 @@ export const useStore = create<AppState>()(
         await api.updateOrderStatus(id, status)
 
         set((state) => ({
-          orders: state.orders.map((o) =>
-            o.id === id ? { ...o, status } : o
-          ),
+          orders: state.orders.map((o) => (o.id === id ? { ...o, status } : o)),
         }))
       },
 

@@ -8,9 +8,24 @@ export interface Product {
   active: boolean
 }
 
+export interface Addon {
+  id: string
+  name: string
+  price: number
+  maxQty?: number
+}
+
+export interface SelectedAddon {
+  addon: Addon
+  quantity: number
+}
+
 export interface CartItem {
+  cartItemId?: string
   product: Product
   quantity: number
+  addons?: SelectedAddon[]
+  observation?: string
 }
 
 export interface Customer {

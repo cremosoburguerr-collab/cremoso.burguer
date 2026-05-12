@@ -23,7 +23,7 @@ const paymentMethods: { id: PaymentMethod; label: string; icon: React.ElementTyp
   { id: 'pix', label: 'Pix', icon: QrCode },
   { id: 'cartao', label: 'Cartão', icon: CreditCard },
   { id: 'dinheiro', label: 'Dinheiro', icon: Banknote },
-  { id: 'link', label: 'Link de pagamento', icon: Link }
+  { id: 'link', label: 'Link de pagamento', icon: Link },
 ]
 
 export function Checkout({ onBack, onComplete }: CheckoutProps) {
@@ -33,7 +33,7 @@ export function Checkout({ onBack, onComplete }: CheckoutProps) {
     name: '',
     phone: '',
     address: '',
-    neighborhood: ''
+    neighborhood: '',
   })
   const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>('pix')
   const [observation, setObservation] = useState('')
@@ -58,14 +58,13 @@ export function Checkout({ onBack, onComplete }: CheckoutProps) {
         setLoadingNeighborhoods(false)
       }
     }
-
     fetchBairros()
   }, [])
 
   const subtotal = getCartSubtotal()
   const neighborhoodFee =
-    neighborhoods.find(n => n.nome === customer.neighborhood)?.taxa_entrega
-    ?? settings.deliveryFee
+    neighborhoods.find((n) => n.nome === customer.neighborhood)?.taxa_entrega ??
+    settings.deliveryFee
   const total = subtotal + neighborhoodFee
 
   const formatPrice = (price: number) =>
@@ -89,10 +88,27 @@ export function Checkout({ onBack, onComplete }: CheckoutProps) {
     }
 
     const itemsList = cart
-      .map(item => `• ${item.quantity}x ${item.product.name} - ${formatPrice(item.product.price * item.quantity)}`)
+      .map((item) => {
+        const addonsPrice = (item.addons || []).reduce(
+          (s, sa) => s + sa.addon.price * sa.quantity,
+          0
+        )
+        const unitPrice = item.product.price + addonsPrice
+        const addonsStr =
+          item.addons && item.addons.length > 0
+            ? `\n   Adicionais: ${item.addons.map((sa) => `${sa.quantity > 1 ? `${sa.quantity}x ` : ''}${sa.addon.name}`).join(', ')}`
+            : ''
+        const itemObsStr =
+          item.observation && item.observation.trim()
+            ? `\n   Obs: ${item.observation.trim()}`
+            : ''
+        return `• ${item.quantity}x ${item.product.name} — ${formatPrice(unitPrice * item.quantity)}${addonsStr}${itemObsStr}`
+      })
       .join('\n')
 
-    const obsLine = observation.trim() ? `\n📝 *Observação:*\n${observation.trim()}` : ''
+    const globalObsLine = observation.trim()
+      ? `\n📝 *Observação geral:*\n${observation.trim()}`
+      : ''
 
     const message = `🍔 *NOVO PEDIDO - CREMOSO BURGUER*
 
@@ -104,12 +120,12 @@ export function Checkout({ onBack, onComplete }: CheckoutProps) {
 🏘️ *Bairro:* ${customer.neighborhood}
 
 🍟 *Itens:*
-${itemsList}${obsLine}
+${itemsList}${globalObsLine}
 
 🚚 *Taxa de entrega:* ${formatPrice(neighborhoodFee)}
 💰 *TOTAL:* ${formatPrice(total)}
 
-💳 *Pagamento:* ${paymentMethods.find(p => p.id === selectedPayment)?.label}`
+💳 *Pagamento:* ${paymentMethods.find((p) => p.id === selectedPayment)?.label}`
 
     const rawPhone = settings?.whatsapp
     if (!rawPhone) {
@@ -217,10 +233,10 @@ ${itemsList}${obsLine}
                 )}
               </div>
 
-              {/* Observation */}
+              {/* General Observation */}
               <div className="space-y-2">
                 <Label htmlFor="observation" className="text-foreground flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4" /> Observação (opcional)
+                  <MessageSquare className="w-4 h-4" /> Observação geral (opcional)
                 </Label>
                 <textarea
                   id="observation"
@@ -258,15 +274,41 @@ ${itemsList}${obsLine}
             {/* Order Summary */}
             <div className="bg-muted/50 rounded-lg p-4 space-y-3">
               <h3 className="font-bold text-foreground">Resumo do Pedido</h3>
-              {cart.map((item) => (
-                <div key={item.product.id} className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">{item.quantity}x {item.product.name}</span>
-                  <span className="text-foreground">{formatPrice(item.product.price * item.quantity)}</span>
-                </div>
-              ))}
+              {cart.map((item, idx) => {
+                const addonsPrice = (item.addons || []).reduce(
+                  (s, sa) => s + sa.addon.price * sa.quantity,
+                  0
+                )
+                const unitPrice = item.product.price + addonsPrice
+                const key = item.cartItemId || `${item.product.id}-${idx}`
+                return (
+                  <div key={key} className="space-y-0.5">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        {item.quantity}x {item.product.name}
+                      </span>
+                      <span className="text-foreground">{formatPrice(unitPrice * item.quantity)}</span>
+                    </div>
+                    {item.addons && item.addons.length > 0 && (
+                      <div className="pl-3">
+                        {item.addons.map((sa) => (
+                          <p key={sa.addon.id} className="text-xs text-muted-foreground/70">
+                            + {sa.quantity > 1 ? `${sa.quantity}x ` : ''}{sa.addon.name}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {item.observation && item.observation.trim() && (
+                      <p className="pl-3 text-xs text-muted-foreground/60 italic">
+                        "{item.observation.trim()}"
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
               {observation.trim() && (
                 <div className="border-t border-border pt-3 text-sm">
-                  <p className="text-muted-foreground font-medium mb-1">Observação:</p>
+                  <p className="text-muted-foreground font-medium mb-1">Observação geral:</p>
                   <p className="text-foreground whitespace-pre-wrap">{observation.trim()}</p>
                 </div>
               )}
@@ -301,7 +343,9 @@ ${itemsList}${obsLine}
                   <Loader2 className="w-5 h-5 animate-spin" />
                   CARREGANDO...
                 </span>
-              ) : 'CONFIRMAR PEDIDO'}
+              ) : (
+                'CONFIRMAR PEDIDO'
+              )}
             </Button>
           </div>
         </form>
