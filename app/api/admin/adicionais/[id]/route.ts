@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import pool from '@/lib/pgDb'
+import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+function isTableMissing(error: { message?: string; code?: string } | null): boolean {
+  if (!error) return false
+  const msg = error.message ?? ''
+  const code = error.code ?? ''
+  return (
+    code === 'PGRST204' ||
+    msg.includes('adicionais_categoria') ||
+    msg.includes('schema cache') ||
+    msg.includes('does not exist') ||
+    msg.includes('relation')
+  )
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -11,66 +24,42 @@ export async function PATCH(
   const { id } = await ctx.params
   const body = await req.json()
 
-  const setClauses: string[] = []
-  const values: unknown[] = []
-  let idx = 1
+  const updates: Record<string, unknown> = {}
+  if (body.nome !== undefined) updates.nome = String(body.nome).trim()
+  if (body.preco !== undefined) updates.preco = parseFloat(body.preco) || 0
+  if (body.ativo !== undefined) updates.ativo = !!body.ativo
+  if (body.ordem !== undefined) updates.ordem = parseInt(body.ordem) || 0
+  if (body.categoria_slug !== undefined) updates.categoria_slug = String(body.categoria_slug).trim()
 
-  if (body.nome !== undefined) {
-    setClauses.push(`nome = $${idx++}`)
-    values.push(String(body.nome).trim())
-  }
-  if (body.preco !== undefined) {
-    setClauses.push(`preco = $${idx++}`)
-    values.push(parseFloat(body.preco) || 0)
-  }
-  if (body.ativo !== undefined) {
-    setClauses.push(`ativo = $${idx++}`)
-    values.push(!!body.ativo)
-  }
-  if (body.ordem !== undefined) {
-    setClauses.push(`ordem = $${idx++}`)
-    values.push(parseInt(body.ordem) || 0)
-  }
-  if (body.categoria_slug !== undefined) {
-    setClauses.push(`categoria_slug = $${idx++}`)
-    values.push(String(body.categoria_slug).trim())
-  }
-
-  if (setClauses.length === 0) {
+  if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'Nenhum campo para atualizar' }, { status: 400 })
   }
 
-  values.push(id)
+  const { data, error } = await supabaseAdmin
+    .from('adicionais_categoria')
+    .update(updates)
+    .eq('id', id)
+    .select()
+    .single()
 
-  try {
-    const result = await pool.query(
-      `UPDATE adicionais_categoria
-       SET ${setClauses.join(', ')}
-       WHERE id = $${idx}
-       RETURNING id, categoria_slug, nome, preco, ativo, ordem, created_at`,
-      values
-    )
-
-    if (result.rowCount === 0) {
-      return NextResponse.json({ error: 'Adicional não encontrado' }, { status: 404 })
+  if (error) {
+    if (isTableMissing(error)) {
+      return NextResponse.json({ tableNotFound: true, error: 'Tabela não encontrada.' }, { status: 503 })
     }
-
-    const row = result.rows[0]
-    return NextResponse.json({
-      adicional: {
-        id: row.id,
-        categoriaSlug: row.categoria_slug,
-        nome: row.nome,
-        preco: Number(row.preco) || 0,
-        ativo: !!row.ativo,
-        ordem: row.ordem ?? 0,
-        createdAt: row.created_at,
-      },
-    })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Erro interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  return NextResponse.json({
+    adicional: {
+      id: data.id,
+      categoriaSlug: data.categoria_slug,
+      nome: data.nome,
+      preco: Number(data.preco) || 0,
+      ativo: !!data.ativo,
+      ordem: data.ordem ?? 0,
+      createdAt: data.created_at,
+    },
+  })
 }
 
 export async function DELETE(
@@ -79,19 +68,17 @@ export async function DELETE(
 ) {
   const { id } = await ctx.params
 
-  try {
-    const result = await pool.query(
-      `DELETE FROM adicionais_categoria WHERE id = $1`,
-      [id]
-    )
+  const { error } = await supabaseAdmin
+    .from('adicionais_categoria')
+    .delete()
+    .eq('id', id)
 
-    if (result.rowCount === 0) {
-      return NextResponse.json({ error: 'Adicional não encontrado' }, { status: 404 })
+  if (error) {
+    if (isTableMissing(error)) {
+      return NextResponse.json({ tableNotFound: true, error: 'Tabela não encontrada.' }, { status: 503 })
     }
-
-    return NextResponse.json({ ok: true })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Erro interno'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  return NextResponse.json({ ok: true })
 }

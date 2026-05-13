@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Plus, Pencil, Trash2, Check, X,
   ToggleLeft, ToggleRight, Loader2, AlertTriangle,
+  Copy, CheckCheck, ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,6 +18,21 @@ interface Category {
 }
 
 const BEBIDAS_SLUG = 'bebidas'
+
+const MIGRATION_SQL = `create table if not exists adicionais_categoria (
+  id uuid primary key default gen_random_uuid(),
+  categoria_slug text not null,
+  nome text not null,
+  preco numeric(10,2) not null default 0,
+  ativo boolean not null default true,
+  ordem int default 0,
+  created_at timestamptz default now()
+);
+alter table adicionais_categoria enable row level security;
+create policy "Public read" on adicionais_categoria
+  for select using (true);
+create policy "Service role write" on adicionais_categoria
+  using (auth.role() = 'service_role');`
 
 interface FormState {
   nome: string
@@ -42,6 +58,9 @@ export function AddonsPanel() {
   const [loadingAddons, setLoadingAddons] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [tableNotFound, setTableNotFound] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const [isAdding, setIsAdding] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -77,7 +96,13 @@ export function AddonsPanel() {
     try {
       const res = await fetch(`/api/admin/adicionais?categoria_slug=${encodeURIComponent(slug)}`)
       const json = await res.json()
+      if (json.tableNotFound) {
+        setTableNotFound(true)
+        setAddonsList([])
+        return
+      }
       if (!res.ok) throw new Error(json.error || 'Erro')
+      setTableNotFound(false)
       setAddonsList(json.adicionais ?? [])
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao carregar adicionais')
@@ -86,13 +111,26 @@ export function AddonsPanel() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchCategories()
-  }, [fetchCategories])
+  useEffect(() => { fetchCategories() }, [fetchCategories])
 
   useEffect(() => {
     if (selectedSlug) fetchAddons(selectedSlug)
   }, [selectedSlug, fetchAddons])
+
+  const handleCheckAgain = async () => {
+    setChecking(true)
+    await fetchCategories()
+    if (selectedSlug) await fetchAddons(selectedSlug)
+    setChecking(false)
+  }
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(MIGRATION_SQL)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2500)
+    } catch { /* ignore */ }
+  }
 
   const formatPrice = (price: number) =>
     price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -133,25 +171,20 @@ export function AddonsPanel() {
         ordem: parseInt(form.ordem) || 0,
         categoria_slug: form.categoria_slug || selectedSlug,
       }
-
-      let res: Response
-      if (isAdding) {
-        res = await fetch('/api/admin/adicionais', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-      } else {
-        res = await fetch(`/api/admin/adicionais/${editingId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-      }
-
+      const res = isAdding
+        ? await fetch('/api/admin/adicionais', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
+        : await fetch(`/api/admin/adicionais/${editingId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          })
       const json = await res.json()
+      if (json.tableNotFound) { setTableNotFound(true); return }
       if (!res.ok) throw new Error(json.error || 'Erro ao salvar')
-
       await fetchAddons(selectedSlug)
       handleCancel()
     } catch (e) {
@@ -162,12 +195,13 @@ export function AddonsPanel() {
   }
 
   const handleDelete = async (id: string, nome: string) => {
-    if (!confirm(`Excluir adicional "${nome}"? Esta ação não pode ser desfeita.`)) return
+    if (!confirm(`Excluir adicional "${nome}"?`)) return
     setBusy(true)
     setError(null)
     try {
       const res = await fetch(`/api/admin/adicionais/${id}`, { method: 'DELETE' })
       const json = await res.json()
+      if (json.tableNotFound) { setTableNotFound(true); return }
       if (!res.ok) throw new Error(json.error || 'Erro ao excluir')
       await fetchAddons(selectedSlug)
     } catch (e) {
@@ -200,9 +234,78 @@ export function AddonsPanel() {
 
   const isBebidas = selectedSlug === BEBIDAS_SLUG
 
+  // ── One-time setup needed ──
+  if (tableNotFound) {
+    return (
+      <div className="space-y-5 max-w-2xl">
+        <div>
+          <h2 className="text-lg font-bold text-foreground">Adicionais por Categoria</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">Configuração única necessária.</p>
+        </div>
+
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-foreground">Tabela não encontrada no Supabase</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Execute o SQL abaixo no{' '}
+                <a
+                  href="https://supabase.com/dashboard/project/zhzlctetqzfypztvpzfg/editor"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline text-primary"
+                >
+                  SQL Editor do Supabase
+                </a>
+                {' '}e clique em "Verificar".
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-end gap-2">
+              <a
+                href="https://supabase.com/dashboard/project/zhzlctetqzfypztvpzfg/editor"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-muted hover:bg-muted/80 text-sm text-foreground transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Abrir SQL Editor
+              </a>
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground text-sm transition-colors"
+              >
+                {copied ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? 'Copiado!' : 'Copiar SQL'}
+              </button>
+            </div>
+            <pre className="bg-card border border-border rounded-lg p-4 text-xs text-muted-foreground overflow-x-auto leading-relaxed whitespace-pre-wrap select-all">
+              {MIGRATION_SQL}
+            </pre>
+          </div>
+
+          <div className="border-t border-yellow-500/20 pt-4">
+            <Button
+              onClick={handleCheckAgain}
+              disabled={checking}
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              {checking
+                ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Verificando...</>
+                : <><Check className="w-4 h-4 mr-2" />Já executei — Verificar</>}
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Normal UI ──
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-foreground">Adicionais por Categoria</h2>
@@ -222,7 +325,7 @@ export function AddonsPanel() {
         )}
       </div>
 
-      {/* Category Selector */}
+      {/* Category tabs */}
       {loadingCats ? (
         <div className="flex items-center gap-2 text-muted-foreground text-sm">
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -253,7 +356,6 @@ export function AddonsPanel() {
         </div>
       )}
 
-      {/* Bebidas notice */}
       {isBebidas && (
         <div className="flex items-start gap-3 bg-muted/50 border border-border rounded-lg p-4 text-sm text-muted-foreground">
           <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-yellow-500" />
@@ -264,7 +366,6 @@ export function AddonsPanel() {
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <div className="bg-destructive/10 border border-destructive/30 text-destructive text-sm rounded-lg p-3 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -272,7 +373,7 @@ export function AddonsPanel() {
         </div>
       )}
 
-      {/* Add/Edit Form */}
+      {/* Add/Edit form */}
       {(isAdding || editingId) && !isBebidas && (
         <div className="bg-card border border-border rounded-lg p-5">
           <h3 className="font-bold text-foreground mb-4">
@@ -313,7 +414,7 @@ export function AddonsPanel() {
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-foreground text-sm">Ordem (opcional)</Label>
+              <Label className="text-foreground text-sm">Ordem</Label>
               <Input
                 type="number"
                 min="0"
@@ -334,11 +435,9 @@ export function AddonsPanel() {
                     : 'bg-muted text-muted-foreground border border-border'
                 }`}
               >
-                {form.ativo ? (
-                  <><ToggleRight className="w-4 h-4" /> Ativo</>
-                ) : (
-                  <><ToggleLeft className="w-4 h-4" /> Inativo</>
-                )}
+                {form.ativo
+                  ? <><ToggleRight className="w-4 h-4" /> Ativo</>
+                  : <><ToggleLeft className="w-4 h-4" /> Inativo</>}
               </button>
             </div>
           </div>
@@ -348,18 +447,18 @@ export function AddonsPanel() {
               disabled={busy || !form.nome.trim()}
               className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
-              {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Check className="w-4 h-4 mr-2" />}
-              {busy ? 'Salvando...' : isAdding ? 'Adicionar' : 'Salvar alterações'}
+              {busy
+                ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Salvando...</>
+                : <><Check className="w-4 h-4 mr-2" />{isAdding ? 'Adicionar' : 'Salvar'}</>}
             </Button>
             <Button variant="outline" onClick={handleCancel} disabled={busy}>
-              <X className="w-4 h-4 mr-2" />
-              Cancelar
+              <X className="w-4 h-4 mr-2" />Cancelar
             </Button>
           </div>
         </div>
       )}
 
-      {/* Addons List */}
+      {/* List */}
       {!isBebidas && selectedSlug && (
         <div className="bg-card border border-border rounded-lg overflow-hidden">
           {loadingAddons ? (
@@ -389,12 +488,8 @@ export function AddonsPanel() {
                     <td className="p-4">
                       <p className="font-semibold text-foreground text-sm">{a.nome}</p>
                     </td>
-                    <td className="p-4 text-foreground font-bold text-sm">
-                      {formatPrice(a.preco)}
-                    </td>
-                    <td className="p-4 text-muted-foreground text-sm hidden sm:table-cell">
-                      {a.ordem}
-                    </td>
+                    <td className="p-4 text-foreground font-bold text-sm">{formatPrice(a.preco)}</td>
+                    <td className="p-4 text-muted-foreground text-sm hidden sm:table-cell">{a.ordem}</td>
                     <td className="p-4">
                       <button
                         onClick={() => handleToggleAtivo(a)}
@@ -405,11 +500,9 @@ export function AddonsPanel() {
                             : 'bg-destructive/20 text-destructive'
                         } disabled:opacity-50`}
                       >
-                        {a.ativo ? (
-                          <><ToggleRight className="w-3.5 h-3.5" /> Ativo</>
-                        ) : (
-                          <><ToggleLeft className="w-3.5 h-3.5" /> Inativo</>
-                        )}
+                        {a.ativo
+                          ? <><ToggleRight className="w-3.5 h-3.5" /> Ativo</>
+                          : <><ToggleLeft className="w-3.5 h-3.5" /> Inativo</>}
                       </button>
                     </td>
                     <td className="p-4">
